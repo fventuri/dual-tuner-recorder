@@ -3,7 +3,7 @@
 `dual-tuner-recorder` is a command line utility to record to disk the stream of I/Q samples from both tuners of the SDRplay RSPduo.
 
 The output formats are:
-  - raw (i.e. just the I/Q values as an interlaced stream of 16 bit shorts, i.e.I tuner A, Q tuner A, I tuner B, Q tuner B)
+  - raw (i.e. just the I/Q values as an interlaced stream of 16 bit shorts, i.e. I tuner A, Q tuner A, I tuner B, Q tuner B)
   - Linrad, compatible with the Linrad SDR program
   - WAV, which generates a WAV file in RIFF/RF64 format with four PCM channels (PCM is another way of calling a stream of 16 bit shorts, as described in the raw format)
 
@@ -13,25 +13,26 @@ Settings that should be different between the two tuners can be assigned by sepa
   - `-l 3` sets the LNA state for both tuners at 3
   - `-l 3,5` sets the LNA state for tuner A at 3 and for tuner B at 5
 
-Some settings, like decimation, accept only one value, since the two tuners should always use the same decimation factor (if not, the two output streams of samples would have a different sample rate).
+Some settings, like decimation, accept only one value, since the two tuners should always use the same decimation factor (if not, the two output streams would have a different sample rate).
 
 The files in WAV format contain a special chunk called 'auxi' that follows the specification from SpectraVue users guide.
-The two values 'unused4' and 'unused5' in the 'auxi' chunk contain the initial gain reduction values in 1/1000 of a dB (a 'milli dB'); in other words a value of 57539 means a gain reduction of 57.539dB.
+The two values 'unused4' and 'unused5' in the 'auxi' chunk contain the initial gains in 1/1000 of a dB (a 'milli dB'); in other words a value of 57539 means a gain of 57.539 dB. These gains shouldn't change during a recording unless AGC is enabled (see 'gains file' below).
 
-The WAV files in RF64 format can also optionally contain time markers stored in a 'r64m' chunk, following the format described EBU technical specification 3306 v1.1 (July 2009). The command line argument '-m' enables these time markers at specified intervals; for instance '-m 60' creates a marker at the beginning of each minute; '-m 900' creates markers at 0, 15, 30, and 45 minutes past the hour. The labels for these time markers are the timestamps in ISO8601/RFC3339 format (including nanoseconds; i.e. '2025-04-27T21:56:45.123456789Z')
+The WAV files in RF64 format can also optionally contain time markers stored in a 'r64m' chunk, following the format described EBU technical specification 3306 v1.1 (July 2009). The command line argument '-m' enables these time markers at specified intervals; for instance '-m 60' creates a marker at the beginning of each minute; '-m 900' creates markers at 0, 15, 30, and 45 minutes past the hour. The labels for these time markers are the timestamps in ISO8601/RFC3339 format (including nanoseconds; for instance '2025-04-27T21:56:45.123456789Z')
 
-The utility can also write a secondary file with the gain (reduction) changes; anytime one of the gain values changes (for instance when using AGC), a new entry is added to this file with:
+The utility can also write a secondary file with the gain changes; anytime one of the gain values changes (because of AGC), a new entry is added to this file with:
    - sample number (uint64_t)
    - current gain (float)
    - tuner (uint8_t) - 0 for tuner A, 1 for tuner B
    - gRdB (uint8_t)
    - LNA gRdB  (uint8_t)
    - padding (1 byte)
-Each entry is 16 bytes long.
+
+Each entry is 16 bytes long; it can be read using Python struct module with a format '@Qf3Bx'; the Python script `show_gains.py`; it can be read using Python struct module with a format '@Qf3Bx'; the Python script `show_gains.py` shows how it can be done.
 
 ## Important note about sample rates, IF frequency, and IF bandwidth when operating the RSPduo in dual tuner mode
 
-To operate in dual tuner mode, the RSPduo hardware/software requires one of a specific set of combinations of RSPduo sample rate, IF frequency, and IF bandwidth. The full list is shown in the table below. When one of these modes is selected, the RSPduo hw/sw will apply an 'internal decimation' (usually by 3 or 4) that will divide the RSPduo sample rate. The output sample rate (i.e. the sample rate of the I/Q samples that this utility will write to file) is therefore:
+To operate in dual tuner mode, the RSPduo hardware/software requires one of a specific set of combinations of RSPduo sample rate, IF frequency, and IF bandwidth. The full list is shown in the table below. When one of these modes is selected, the RSPduo hw/sw will apply an 'internal decimation' (by 3 or 4) that will divide the RSPduo sample rate. The output sample rate (i.e. the sample rate of the I/Q samples that this utility will write to file) is therefore:
 
     fs_out = RSPduo sample rate / internal decimation / user selected decimation
 
@@ -108,7 +109,7 @@ dual_tuner_recorder -r 6000000 -i 1620 -b 1536 -l 3 -f 162550000
 ```
 The output file will have a sample rate of 2Msps.
 
-- same as above, but with a sample rate of 8MHz (lower sample resolution: 12 bits instead of 14 bits)
+- same as above, but with a sample rate of 8MHz (lower sample resolution; 12 bits instead of 14 bits)
 ```
 dual_tuner_recorder -r 8000000 -i 2048 -b 1536 -l 3 -f 162550000
 ```
