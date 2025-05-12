@@ -30,6 +30,8 @@
 
 #define NUM_GAIN_CHANGES 100
 
+#define MAX(x, y) (x > y) ? (x) : (y)
+
 static char default_output_filename_raw[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQKHZ}.iq";
 static char default_output_filename_linrad[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQKHZ}.raw";
 static char default_output_filename_wav[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQHZ}.wav";
@@ -69,6 +71,7 @@ typedef struct {
     unsigned int write_index;
     unsigned int size;
     unsigned int nused;
+    unsigned int nused_max;
     unsigned int nready;
     pthread_cond_t *is_ready;
 } ResourceDescriptor;
@@ -171,13 +174,15 @@ int main(int argc, char *argv[])
     int streaming_time = 10;  /* streaming time in seconds */
     int marker_interval = 0;  /* store a marker tick every N seconds */
     char *outfile_template = NULL;
+    int blocks_buffer_capacity = 1000;
+    int samples_buffer_capacity = 1048576;
     OutputType output_type = OUTPUT_TYPE_RAW;
     int gains_file_enable = 0;
     int debug_enable = 0;
     int verbose = 0;
 
     int c;
-    while ((c = getopt(argc, argv, "s:r:d:i:b:g:l:DIy:f:x:m:o:RLWGXvh")) != -1) {
+    while ((c = getopt(argc, argv, "s:r:d:i:b:g:l:DIy:f:x:m:o:j:k:RLWGXvh")) != -1) {
         int n;
         switch (c) {
             case 's':
@@ -269,6 +274,18 @@ int main(int argc, char *argv[])
                 break;
             case 'o':
                 outfile_template = optarg;
+                break;
+            case 'j':
+                if (sscanf(optarg, "%d", &blocks_buffer_capacity) != 1) {
+                    fprintf(stderr, "invalid blocks buffer capacity: %s\n", optarg);
+                    exit(1);
+                }
+                break;
+            case 'k':
+                if (sscanf(optarg, "%d", &samples_buffer_capacity) != 1) {
+                    fprintf(stderr, "invalid samples blocks buffer capacity: %s\n", optarg);
+                    exit(1);
+                }
                 break;
             case 'R':
                 output_type = OUTPUT_TYPE_RAW;
@@ -482,6 +499,7 @@ int main(int argc, char *argv[])
         .write_index = 0,
         .size = NUM_BLOCKS,
         .nused = 0,
+        .nused_max = 0,
         .nready = 0,
         .is_ready = &is_ready,
     };
@@ -501,6 +519,7 @@ int main(int argc, char *argv[])
         .write_index = 0,
         .size = NUM_SAMPLES,
         .nused = 0,
+        .nused_max = 0,
         .nready = 0,
         .is_ready = NULL,
     };
@@ -547,6 +566,7 @@ int main(int argc, char *argv[])
         .write_index = 0,
         .size = gain_changes_size,
         .nused = 0,
+        .nused_max = 0,
         .nready = 0,
         .is_ready = NULL,
     };
@@ -942,6 +962,8 @@ free_gain_changes_resources:
     fprintf(stderr, "samples per rx_callback range = [%u,%u] / [%u,%u]\n", rx_contexts[0].num_samples_min, rx_contexts[0].num_samples_max, rx_contexts[1].num_samples_min, rx_contexts[1].num_samples_max);
     fprintf(stderr, "output samples = %llu (x2)\n", output_samples);
     fprintf(stderr, "data size = %llu\n", data_size);
+    fprintf(stderr, "blocks buffer usage = %u/%u\n", blocks_resource.nused_max, blocks_resource.size);
+    fprintf(stderr, "samples buffer usage = %u/%u\n", samples_resource.nused_max, samples_resource.size);
     // fv
     fprintf(stderr, "gain changes = %llu / %llu\n", num_gain_changes[0], num_gain_changes[1]);
 
@@ -997,6 +1019,9 @@ static void usage(const char* progname)
     fprintf(stderr, "    -f <center frequency>\n");
     fprintf(stderr, "    -x <streaming time (s)> (default: 10s)\n");
     fprintf(stderr, "    -m <time marker interval (s)> (default: 0 -> no time markers)\n");
+    fprintf(stderr, "    -o <output filename template>\n");
+    fprintf(stderr, "    -j <blocks buffer capacity> (in number of blocks)\n");
+    fprintf(stderr, "    -k <samples buffer capacity> (in number of samples)\n");
     fprintf(stderr, "    -L output file in Linrad format\n");
     fprintf(stderr, "    -R output file in raw format (i.e. just the samples)\n");
     fprintf(stderr, "    -W output file in RIFF/RF64 format\n");
@@ -1218,6 +1243,7 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
         if (blocks_has_enough_space) {
             blocks_resource->write_index = (blocks_write_index + 1) % blocks_resource->size;
             blocks_resource->nused++;
+            blocks_resource->nused_max = MAX(blocks_resource->nused_max, blocks_resource->nused);
         }
         pthread_mutex_unlock(blocks_resource->lock);
         if (!blocks_has_enough_space) {
@@ -1301,6 +1327,7 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
     if (samples_has_enough_space) {
         samples_resource->write_index = samples_write_index + samples_space_required;
         samples_resource->nused += samples_space_required;
+        samples_resource->nused_max = MAX(samples_resource->nused_max, samples_resource->nused);
     }
     pthread_mutex_unlock(samples_resource->lock);
     if (!samples_has_enough_space) {
@@ -1317,6 +1344,7 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
     if (blocks_has_enough_space) {
         blocks_resource->write_index = (blocks_resource->write_index + 1) % blocks_resource->size;
         blocks_resource->nused++;
+        blocks_resource->nused_max = MAX(blocks_resource->nused_max, blocks_resource->nused);
     }
     pthread_mutex_unlock(blocks_resource->lock);
     if (!blocks_has_enough_space) {
