@@ -25,8 +25,8 @@
 
 #include <sdrplay_api.h>
 
-#define NUM_BLOCKS 100
-#define NUM_SAMPLES 65536
+#define NUM_BLOCKS 1000
+#define NUM_SAMPLES 1048576
 
 #define NUM_GAIN_CHANGES 100
 
@@ -427,6 +427,17 @@ int main(int argc, char *argv[])
     rx_channelA_params->tunerParams.gain.LNAstate = LNAstate_A;
     rx_channelA_params->ctrlParams.dcOffset.DCenable = DCenable;
     rx_channelA_params->ctrlParams.dcOffset.IQenable = IQenable;
+    rx_channelB_params->ctrlParams.decimation.enable = decimation > 1;
+    rx_channelB_params->ctrlParams.decimation.decimationFactor = decimation;
+    rx_channelB_params->tunerParams.ifType = if_frequency;
+    rx_channelB_params->tunerParams.bwType = if_bandwidth;
+    rx_channelB_params->ctrlParams.agc.enable = agc_B;
+    if (agc_B == sdrplay_api_AGC_DISABLE) {
+        rx_channelA_params->tunerParams.gain.gRdB = gRdB_B;
+    }
+    rx_channelB_params->tunerParams.gain.LNAstate = LNAstate_B;
+    rx_channelB_params->ctrlParams.dcOffset.DCenable = DCenable;
+    rx_channelB_params->ctrlParams.dcOffset.IQenable = IQenable;
     rx_channelA_params->tunerParams.dcOffsetTuner.dcCal = dcCal;
     rx_channelA_params->tunerParams.dcOffsetTuner.speedUp = speedUp;
     rx_channelA_params->tunerParams.dcOffsetTuner.trackTime = trackTime;
@@ -436,6 +447,7 @@ int main(int argc, char *argv[])
     rx_channelB_params->tunerParams.dcOffsetTuner.trackTime = trackTime;
     rx_channelB_params->tunerParams.dcOffsetTuner.refreshRateTime = refreshRateTime;
     rx_channelA_params->tunerParams.rfFreq.rfHz = frequency_A;
+    rx_channelB_params->tunerParams.rfFreq.rfHz = frequency_B;
 
     int internal_decimation = get_internal_decimation(device_params, device.rspDuoSampleFreq);
     if (internal_decimation == -1) {
@@ -443,15 +455,6 @@ int main(int argc, char *argv[])
         sdrplay_api_ReleaseDevice(&device);
         sdrplay_api_Close();
         exit(1);
-    }
-
-    /* print settings */
-    if (verbose) {
-        fprintf(stderr, "SerNo=%s hwVer=%d tuner=0x%02x rspDuoMode=0x%02x rspDuoSampleFreq=%.0lf internalDecimation=%d\n", device.SerNo, device.hwVer, device.tuner, device.rspDuoMode, device.rspDuoSampleFreq, internal_decimation);
-        fprintf(stderr, "RX A - LO=%.0lf BW=%d If=%d Dec=%d IFagc=%d IFgain=%d LNAgain=%d\n", rx_channelA_params->tunerParams.rfFreq.rfHz, rx_channelA_params->tunerParams.bwType, rx_channelA_params->tunerParams.ifType, rx_channelA_params->ctrlParams.decimation.decimationFactor, rx_channelA_params->ctrlParams.agc.enable, rx_channelA_params->tunerParams.gain.gRdB, rx_channelA_params->tunerParams.gain.LNAstate);
-        fprintf(stderr, "RX A - DCenable=%d IQenable=%d dcCal=%d speedUp=%d trackTime=%d refreshRateTime=%d\n", (int)(rx_channelA_params->ctrlParams.dcOffset.DCenable), (int)(rx_channelA_params->ctrlParams.dcOffset.IQenable), (int)(rx_channelA_params->tunerParams.dcOffsetTuner.dcCal), (int)(rx_channelA_params->tunerParams.dcOffsetTuner.speedUp), rx_channelA_params->tunerParams.dcOffsetTuner.trackTime, rx_channelA_params->tunerParams.dcOffsetTuner.refreshRateTime);
-        fprintf(stderr, "RX B - LO=%.0lf BW=%d If=%d Dec=%d IFagc=%d IFgain=%d LNAgain=%d\n", rx_channelB_params->tunerParams.rfFreq.rfHz, rx_channelB_params->tunerParams.bwType, rx_channelB_params->tunerParams.ifType, rx_channelB_params->ctrlParams.decimation.decimationFactor, rx_channelB_params->ctrlParams.agc.enable, rx_channelB_params->tunerParams.gain.gRdB, rx_channelB_params->tunerParams.gain.LNAstate);
-        fprintf(stderr, "RX B - DCenable=%d IQenable=%d dcCal=%d speedUp=%d trackTime=%d refreshRateTime=%d\n", (int)(rx_channelB_params->ctrlParams.dcOffset.DCenable), (int)(rx_channelB_params->ctrlParams.dcOffset.IQenable), (int)(rx_channelB_params->tunerParams.dcOffsetTuner.dcCal), (int)(rx_channelB_params->tunerParams.dcOffsetTuner.speedUp), rx_channelB_params->tunerParams.dcOffsetTuner.trackTime, rx_channelB_params->tunerParams.dcOffsetTuner.refreshRateTime);
     }
 
     int errcode;
@@ -633,6 +636,15 @@ int main(int argc, char *argv[])
             sdrplay_api_Close();
             exit(1);
         }
+    }
+
+    /* print settings */
+    if (verbose) {
+        fprintf(stderr, "SerNo=%s hwVer=%d tuner=0x%02x rspDuoMode=0x%02x rspDuoSampleFreq=%.0lf internalDecimation=%d\n", device.SerNo, device.hwVer, device.tuner, device.rspDuoMode, device.rspDuoSampleFreq, internal_decimation);
+        fprintf(stderr, "RX A - LO=%.0lf BW=%d If=%d Dec=%d IFagc=%d IFgain=%d LNAgain=%d\n", rx_channelA_params->tunerParams.rfFreq.rfHz, rx_channelA_params->tunerParams.bwType, rx_channelA_params->tunerParams.ifType, rx_channelA_params->ctrlParams.decimation.decimationFactor, rx_channelA_params->ctrlParams.agc.enable, rx_channelA_params->tunerParams.gain.gRdB, rx_channelA_params->tunerParams.gain.LNAstate);
+        fprintf(stderr, "RX A - DCenable=%d IQenable=%d dcCal=%d speedUp=%d trackTime=%d refreshRateTime=%d\n", (int)(rx_channelA_params->ctrlParams.dcOffset.DCenable), (int)(rx_channelA_params->ctrlParams.dcOffset.IQenable), (int)(rx_channelA_params->tunerParams.dcOffsetTuner.dcCal), (int)(rx_channelA_params->tunerParams.dcOffsetTuner.speedUp), rx_channelA_params->tunerParams.dcOffsetTuner.trackTime, rx_channelA_params->tunerParams.dcOffsetTuner.refreshRateTime);
+        fprintf(stderr, "RX B - LO=%.0lf BW=%d If=%d Dec=%d IFagc=%d IFgain=%d LNAgain=%d\n", rx_channelB_params->tunerParams.rfFreq.rfHz, rx_channelB_params->tunerParams.bwType, rx_channelB_params->tunerParams.ifType, rx_channelB_params->ctrlParams.decimation.decimationFactor, rx_channelB_params->ctrlParams.agc.enable, rx_channelB_params->tunerParams.gain.gRdB, rx_channelB_params->tunerParams.gain.LNAstate);
+        fprintf(stderr, "RX B - DCenable=%d IQenable=%d dcCal=%d speedUp=%d trackTime=%d refreshRateTime=%d\n", (int)(rx_channelB_params->ctrlParams.dcOffset.DCenable), (int)(rx_channelB_params->ctrlParams.dcOffset.IQenable), (int)(rx_channelB_params->tunerParams.dcOffsetTuner.dcCal), (int)(rx_channelB_params->tunerParams.dcOffsetTuner.speedUp), rx_channelB_params->tunerParams.dcOffsetTuner.trackTime, rx_channelB_params->tunerParams.dcOffsetTuner.refreshRateTime);
     }
 
     if (outfile_template == NULL) {
