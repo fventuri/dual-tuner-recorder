@@ -25,13 +25,6 @@
 
 #include <sdrplay_api.h>
 
-#define NUM_BLOCKS 1000
-#define NUM_SAMPLES 1048576
-
-#define NUM_GAIN_CHANGES 100
-
-#define MAX(x, y) (x > y) ? (x) : (y)
-
 static char default_output_filename_raw[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQKHZ}.iq";
 static char default_output_filename_linrad[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQKHZ}.raw";
 static char default_output_filename_wav[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQHZ}.wav";
@@ -104,6 +97,7 @@ typedef struct {
     struct timespec earliest_callback;
     struct timespec latest_callback;
     unsigned long long total_samples;
+    unsigned long long dropped_samples;
     unsigned int next_sample_num;
     unsigned int num_samples_min, num_samples_max;
     short imin, imax;
@@ -140,7 +134,6 @@ static unsigned int firstSampleNum = 0;
 // perhaps we need a mutex around streaming_status
 static StreamingStatus streaming_status = STREAMING_STATUS_STARTING;
 
-// fv
 static unsigned long long num_gain_changes[2] = {0L, 0L};
 
 static void signal_handler(int signum) {
@@ -176,6 +169,7 @@ int main(int argc, char *argv[])
     char *outfile_template = NULL;
     int blocks_buffer_capacity = 1000;
     int samples_buffer_capacity = 1048576;
+    int gain_changes_buffer_capacity = 100;
     OutputType output_type = OUTPUT_TYPE_RAW;
     int gains_file_enable = 0;
     int debug_enable = 0;
@@ -491,13 +485,13 @@ int main(int argc, char *argv[])
         sdrplay_api_Close();
         exit(1);
     }
-    BlockDescriptor *blocks = (BlockDescriptor *)malloc(NUM_BLOCKS * sizeof(BlockDescriptor));
+    BlockDescriptor *blocks = (BlockDescriptor *)malloc(blocks_buffer_capacity * sizeof(BlockDescriptor));
     ResourceDescriptor blocks_resource = {
         .lock = &blocks_lock,
         .resource = blocks,
         .read_index = 0,
         .write_index = 0,
-        .size = NUM_BLOCKS,
+        .size = blocks_buffer_capacity,
         .nused = 0,
         .nused_max = 0,
         .nready = 0,
@@ -511,13 +505,13 @@ int main(int argc, char *argv[])
         sdrplay_api_Close();
         exit(1);
     }
-    short *insamples = (short *)malloc(NUM_SAMPLES * sizeof(short));
+    short *insamples = (short *)malloc(samples_buffer_capacity * sizeof(short));
     ResourceDescriptor samples_resource = {
         .lock = &samples_lock,
         .resource = insamples,
         .read_index = 0,
         .write_index = 0,
-        .size = NUM_SAMPLES,
+        .size = samples_buffer_capacity,
         .nused = 0,
         .nused_max = 0,
         .nready = 0,
@@ -556,8 +550,8 @@ int main(int argc, char *argv[])
             sdrplay_api_Close();
             exit(1);
         }
-        gain_changes_size = NUM_GAIN_CHANGES;
-        gain_changes = (GainChange *)malloc(gain_changes_size * sizeof(GainChange));
+        gain_changes_size = gain_changes_buffer_capacity;
+        gain_changes = (GainChange *)malloc(gain_changes_buffer_capacity * sizeof(GainChange));
     }
     ResourceDescriptor gain_changes_resource = {
         .lock = &gain_changes_lock,
@@ -575,6 +569,7 @@ int main(int argc, char *argv[])
         { .earliest_callback = {0, 0},
           .latest_callback = {0, 0},
           .total_samples = 0,
+          .dropped_samples = 0,
           .next_sample_num = 0xffffffff,
           .num_samples_min = UINT_MAX,
           .num_samples_max = 0,
@@ -589,6 +584,7 @@ int main(int argc, char *argv[])
         { .earliest_callback = {0, 0},
           .latest_callback = {0, 0},
           .total_samples = 0,
+          .dropped_samples = 0,
           .next_sample_num = 0xffffffff,
           .num_samples_min = UINT_MAX,
           .num_samples_max = 0,
@@ -612,7 +608,7 @@ int main(int argc, char *argv[])
         .event_context = &event_context,
     };
 
-    short *outsamples = (short *)malloc(NUM_SAMPLES * sizeof(short));
+    short *outsamples = (short *)malloc(samples_buffer_capacity * sizeof(short));
 
     sdrplay_api_CallbackFnsT callbackFns = {
         rxA_callback,
@@ -955,6 +951,7 @@ free_gain_changes_resources:
         actual_sample_rate[i] = (double)(rx_context->total_samples) / elapsed_sec[i];
     }
     fprintf(stderr, "total samples = %llu / %llu\n", rx_contexts[0].total_samples, rx_contexts[1].total_samples);
+    fprintf(stderr, "dropped samples = %llu / %llu\n", rx_contexts[0].dropped_samples, rx_contexts[1].dropped_samples);
     fprintf(stderr, "elapsed time = %lf / %lf\n", elapsed_sec[0], elapsed_sec[1]);
     fprintf(stderr, "actual sample rate = %.0lf / %.0lf\n", actual_sample_rate[0], actual_sample_rate[1]);
     fprintf(stderr, "I samples range = [%hd,%hd] / [%hd,%hd]\n", rx_contexts[0].imin, rx_contexts[0].imax, rx_contexts[1].imin, rx_contexts[1].imax);
@@ -964,7 +961,6 @@ free_gain_changes_resources:
     fprintf(stderr, "data size = %llu\n", data_size);
     fprintf(stderr, "blocks buffer usage = %u/%u\n", blocks_resource.nused_max, blocks_resource.size);
     fprintf(stderr, "samples buffer usage = %u/%u\n", samples_resource.nused_max, samples_resource.size);
-    // fv
     fprintf(stderr, "gain changes = %llu / %llu\n", num_gain_changes[0], num_gain_changes[1]);
 
     err = sdrplay_api_ReleaseDevice(&device);
@@ -1190,12 +1186,12 @@ static void rxB_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *para
 
 static void event_callback(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params, void *cbContext)
 {
-    EventContext *eventContext = ((CallbackContext *)cbContext)->event_context;
-    if (!(streaming_status == STREAMING_STATUS_RUNNING || streaming_status == STREAMING_STATUS_TERMINATE)) {
-        return;
-    }
-    if (eventId == sdrplay_api_GainChange) {
-        // fv
+    if (eventId == sdrplay_api_GainChange &&
+        (streaming_status == STREAMING_STATUS_STARTING ||
+         streaming_status == STREAMING_STATUS_RUNNING ||
+         streaming_status == STREAMING_STATUS_TERMINATE)) {
+        EventContext *eventContext = ((CallbackContext *)cbContext)->event_context;
+        uint64_t sample_num = streaming_status == STREAMING_STATUS_STARTING ? 0 : *eventContext->total_samples[tuner - 1];
         num_gain_changes[tuner - 1]++;
         ResourceDescriptor *gain_changes_resource = eventContext->gain_changes_resource;
         if (gain_changes_resource != NULL) {
@@ -1214,7 +1210,7 @@ static void event_callback(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT 
             }
             GainChange *gain_change = (GainChange *)gain_changes_resource->resource + gain_changes_write_index;
             sdrplay_api_GainCbParamT *gain_params = (sdrplay_api_GainCbParamT *)params;
-            gain_change->sample_num = *eventContext->total_samples[tuner - 1];
+            gain_change->sample_num = sample_num;
             gain_change->currGain = gain_params->currGain;
             gain_change->tuner = tuner - 1;
             gain_change->gRdB = gain_params->gRdB;
@@ -1243,7 +1239,9 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
         if (blocks_has_enough_space) {
             blocks_resource->write_index = (blocks_write_index + 1) % blocks_resource->size;
             blocks_resource->nused++;
-            blocks_resource->nused_max = MAX(blocks_resource->nused_max, blocks_resource->nused);
+            if (blocks_resource->nused > blocks_resource->nused_max) {
+                blocks_resource->nused_max = blocks_resource->nused;
+            }
         }
         pthread_mutex_unlock(blocks_resource->lock);
         if (!blocks_has_enough_space) {
@@ -1288,6 +1286,7 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
         } else {
             dropped_samples = UINT_MAX - (params->firstSampleNum - rxContext->next_sample_num) + 1;
         }
+        rxContext->dropped_samples += dropped_samples;
         fprintf(stderr, "RX %c - dropped %d samples\n", rx_id, dropped_samples);
     }
     rxContext->next_sample_num = params->firstSampleNum + numSamples;
@@ -1327,7 +1326,9 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
     if (samples_has_enough_space) {
         samples_resource->write_index = samples_write_index + samples_space_required;
         samples_resource->nused += samples_space_required;
-        samples_resource->nused_max = MAX(samples_resource->nused_max, samples_resource->nused);
+        if (samples_resource->nused > samples_resource->nused_max) {
+            samples_resource->nused_max = samples_resource->nused;
+        }
     }
     pthread_mutex_unlock(samples_resource->lock);
     if (!samples_has_enough_space) {
@@ -1344,7 +1345,9 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
     if (blocks_has_enough_space) {
         blocks_resource->write_index = (blocks_resource->write_index + 1) % blocks_resource->size;
         blocks_resource->nused++;
-        blocks_resource->nused_max = MAX(blocks_resource->nused_max, blocks_resource->nused);
+        if (blocks_resource->nused > blocks_resource->nused_max) {
+            blocks_resource->nused_max = blocks_resource->nused;
+        }
     }
     pthread_mutex_unlock(blocks_resource->lock);
     if (!blocks_has_enough_space) {
