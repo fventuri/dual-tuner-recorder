@@ -93,6 +93,10 @@ These are the command line options for `dual_tuner_recorder`:
     -f <center frequency>
     -x <streaming time (s)> (default: 10s)
     -m <time marker interval (s)> (default: 0 -> no time markers)
+    -o <output filename template>
+    -z <zero sample gaps if smaller than size> (default: 100000)
+    -j <blocks buffer capacity> (in number of blocks)
+    -k <samples buffer capacity> (in number of samples)
     -L output file in Linrad format
     -R output file in raw format (i.e. just the samples)
     -W output file in RIFF/RF64 format

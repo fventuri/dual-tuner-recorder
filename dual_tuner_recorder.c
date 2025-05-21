@@ -99,6 +99,7 @@ typedef struct {
     unsigned long long total_samples;
     unsigned long long dropped_samples;
     unsigned int next_sample_num;
+    int internal_decimation;
     unsigned int num_samples_min, num_samples_max;
     short imin, imax;
     short qmin, qmax;
@@ -167,8 +168,9 @@ int main(int argc, char *argv[])
     int streaming_time = 10;  /* streaming time in seconds */
     int marker_interval = 0;  /* store a marker tick every N seconds */
     char *outfile_template = NULL;
-    int blocks_buffer_capacity = 1000;
-    int samples_buffer_capacity = 1048576;
+    unsigned int zero_sample_gaps_max_size = 100000;
+    unsigned int blocks_buffer_capacity = 1000;
+    unsigned int samples_buffer_capacity = 1048576;
     int gain_changes_buffer_capacity = 100;
     OutputType output_type = OUTPUT_TYPE_RAW;
     int gains_file_enable = 0;
@@ -176,7 +178,7 @@ int main(int argc, char *argv[])
     int verbose = 0;
 
     int c;
-    while ((c = getopt(argc, argv, "s:r:d:i:b:g:l:DIy:f:x:m:o:j:k:RLWGXvh")) != -1) {
+    while ((c = getopt(argc, argv, "s:r:d:i:b:g:l:DIy:f:x:m:o:z:j:k:RLWGXvh")) != -1) {
         int n;
         switch (c) {
             case 's':
@@ -269,15 +271,21 @@ int main(int argc, char *argv[])
             case 'o':
                 outfile_template = optarg;
                 break;
+            case 'z':
+                if (sscanf(optarg, "%u", &zero_sample_gaps_max_size) != 1) {
+                    fprintf(stderr, "invalid zero sample gaps max size: %s\n", optarg);
+                    exit(1);
+                }
+                break;
             case 'j':
-                if (sscanf(optarg, "%d", &blocks_buffer_capacity) != 1) {
+                if (sscanf(optarg, "%u", &blocks_buffer_capacity) != 1) {
                     fprintf(stderr, "invalid blocks buffer capacity: %s\n", optarg);
                     exit(1);
                 }
                 break;
             case 'k':
-                if (sscanf(optarg, "%d", &samples_buffer_capacity) != 1) {
-                    fprintf(stderr, "invalid samples blocks buffer capacity: %s\n", optarg);
+                if (sscanf(optarg, "%u", &samples_buffer_capacity) != 1) {
+                    fprintf(stderr, "invalid samples buffer capacity: %s\n", optarg);
                     exit(1);
                 }
                 break;
@@ -316,6 +324,10 @@ int main(int argc, char *argv[])
             fprintf(stderr, "time markers require WAV output types");
             exit(1);
         }
+    }
+    if (4 * zero_sample_gaps_max_size > samples_buffer_capacity) {
+        fprintf(stderr, "samples buffer is not large enough to accomodate zeroing sample gaps");
+        exit(1);
     }
 
     /* open SDRplay API and check version */
@@ -428,7 +440,7 @@ int main(int argc, char *argv[])
     device_params->devParams->fsFreq.fsHz = rspduo_sample_rate;
     rx_channelA_params->ctrlParams.decimation.enable = decimation > 1;
     rx_channelA_params->ctrlParams.decimation.decimationFactor = decimation;
-    rx_channelA_params->rspDuoTunerParams.tuner1AmPortSel = sdrplay_api_RspDuo_AMPORT_2;
+    //rx_channelA_params->rspDuoTunerParams.tuner1AmPortSel = sdrplay_api_RspDuo_AMPORT_2;
     rx_channelA_params->tunerParams.ifType = if_frequency;
     rx_channelA_params->tunerParams.bwType = if_bandwidth;
     rx_channelA_params->ctrlParams.agc.enable = agc_A;
@@ -459,6 +471,7 @@ int main(int argc, char *argv[])
     rx_channelB_params->tunerParams.dcOffsetTuner.refreshRateTime = refreshRateTime;
     rx_channelA_params->tunerParams.rfFreq.rfHz = frequency_A;
     rx_channelB_params->tunerParams.rfFreq.rfHz = frequency_B;
+
 
     int internal_decimation = get_internal_decimation(device_params, device.rspDuoSampleFreq);
     if (internal_decimation == -1) {
@@ -571,6 +584,7 @@ int main(int argc, char *argv[])
           .total_samples = 0,
           .dropped_samples = 0,
           .next_sample_num = 0xffffffff,
+          .internal_decimation = internal_decimation,
           .num_samples_min = UINT_MAX,
           .num_samples_max = 0,
           .imin = SHRT_MAX,
@@ -586,6 +600,7 @@ int main(int argc, char *argv[])
           .total_samples = 0,
           .dropped_samples = 0,
           .next_sample_num = 0xffffffff,
+          .internal_decimation = internal_decimation,
           .num_samples_min = UINT_MAX,
           .num_samples_max = 0,
           .imin = SHRT_MAX,
@@ -615,6 +630,9 @@ int main(int argc, char *argv[])
         rxB_callback,
         event_callback
     };
+
+    /* many thanks to @bminish for suggesting bulk mode! */
+    device_params->devParams->mode = sdrplay_api_BULK;
 
     err = sdrplay_api_Init(device.dev, &callbackFns, &callback_context);
     if (err != sdrplay_api_Success) {
@@ -690,7 +708,18 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    int outfd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int outfd = -1;
+    if (strcmp(output_filename, "-") == 0) {
+        if (!(output_type == OUTPUT_TYPE_RAW || output_type == OUTPUT_TYPE_LINRAD)) {
+            fprintf(stderr, "ERROR - stdout is only supported for raw and Linrad formats\n");
+            sdrplay_api_ReleaseDevice(&device);
+            sdrplay_api_Close();
+            exit(1);
+        }
+        outfd = fileno(stdout);
+    } else {
+        outfd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    }
     if (outfd == -1) {
         fprintf(stderr, "open(%s) for writing failed: %s\n", output_filename, strerror(errno));
         sdrplay_api_ReleaseDevice(&device);
@@ -722,6 +751,13 @@ int main(int argc, char *argv[])
 
     int gainsfd = -1;
     if (gains_file_enable) {
+        if (strrchr(output_filename, '.') == NULL) {
+            fprintf(stderr, "ERROR - gains file not supported when output file has no extension\n");
+            close(outfd);
+            sdrplay_api_ReleaseDevice(&device);
+            sdrplay_api_Close();
+            exit(1);
+        }
         char gains_filename[PATH_MAX] = "";
         errcode = generate_gains_filename(output_filename, gains_filename, PATH_MAX);
         if (errcode != 0) {
@@ -802,9 +838,30 @@ int main(int argc, char *argv[])
                 } else {
                     dropped_samples = UINT_MAX - (first_sample_num - next_sample_num) + 1;
                 }
-                fprintf(stderr, "dropped %u samples - next_sample_num=%d first_sample_num=%u\n", dropped_samples, next_sample_num, first_sample_num);
+                bool fill_gap_with_zeros = dropped_samples <= zero_sample_gaps_max_size;
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                fprintf(stderr, "%.24s - dropped %u samples - next_sample_num=%d first_sample_num=%u - %s\n", ctime(&ts.tv_sec), dropped_samples, next_sample_num, first_sample_num, fill_gap_with_zeros ? "filling gap with zeros" : "skipping gap");
+                if (fill_gap_with_zeros) {
+                    uint8_t *outdata = (uint8_t *)outsamples;
+                    size_t bytes_left = dropped_samples * 4 * sizeof(short);
+                    memset(outdata, 0, bytes_left);
+                    while (bytes_left > 0) {
+                        ssize_t nwritten = write(outfd, outdata, bytes_left);
+                        if (nwritten == -1) {
+                            fprintf(stderr, "write samples failed: %s\n", strerror(errno));
+                            streaming_status = STREAMING_STATUS_FAILED;
+                            goto free_sample_resources;
+                        }
+                        outdata += nwritten;
+                        bytes_left -= nwritten;
+                        data_size += nwritten;
+                    }
+                    output_samples += dropped_samples;
+                }
             }
-            next_sample_num = first_sample_num + num_samples;
+            unsigned int nsntmp = (first_sample_num + num_samples) * internal_decimation;
+            next_sample_num = (nsntmp + (nsntmp % 4 < 2)) / internal_decimation;
 
             /* rearrange samples in 'quadruples' (I_A, Q_A, I_B, Q_B) */
             /* I tuner A */
@@ -940,7 +997,7 @@ free_gain_changes_resources:
                 rx_channel_params = device_params->rxChannelB;
                 break;
         }
-        //fprintf(stdout, "%c\t%.0lf\t%d\t%d\t%d\t%lf\t%llu\t%.0lf\t%.3lf\t%d\t[%hd,%hd]\t[%hd,%hd]\t[%u,%u]\n", rx_id, device.rspDuoSampleFreq, rx_channel_params->tunerParams.bwType, rx_channel_params->tunerParams.ifType, rx_channel_params->ctrlParams.decimation.decimationFactor, elapsed_sec, rx_context->total_samples, actual_sample_rate, device.rspDuoSampleFreq / actual_sample_rate / rx_channel_params->ctrlParams.decimation.decimationFactor, internal_decimation, rx_context->imin, rx_context->imax, rx_context->qmin, rx_context->qmax, rx_context->num_samples_min, rx_context->num_samples_max);
+        //fprintf(stderr, "%c\t%.0lf\t%d\t%d\t%d\t%lf\t%llu\t%.0lf\t%.3lf\t%d\t[%hd,%hd]\t[%hd,%hd]\t[%u,%u]\n", rx_id, device.rspDuoSampleFreq, rx_channel_params->tunerParams.bwType, rx_channel_params->tunerParams.ifType, rx_channel_params->ctrlParams.decimation.decimationFactor, elapsed_sec, rx_context->total_samples, actual_sample_rate, device.rspDuoSampleFreq / actual_sample_rate / rx_channel_params->ctrlParams.decimation.decimationFactor, internal_decimation, rx_context->imin, rx_context->imax, rx_context->qmin, rx_context->qmax, rx_context->num_samples_min, rx_context->num_samples_max);
 #endif
     double elapsed_sec[2];
     double actual_sample_rate[2];
@@ -1016,6 +1073,7 @@ static void usage(const char* progname)
     fprintf(stderr, "    -x <streaming time (s)> (default: 10s)\n");
     fprintf(stderr, "    -m <time marker interval (s)> (default: 0 -> no time markers)\n");
     fprintf(stderr, "    -o <output filename template>\n");
+    fprintf(stderr, "    -z <zero sample gaps if smaller than size> (default: 100000)\n");
     fprintf(stderr, "    -j <blocks buffer capacity> (in number of blocks)\n");
     fprintf(stderr, "    -k <samples buffer capacity> (in number of samples)\n");
     fprintf(stderr, "    -L output file in Linrad format\n");
@@ -1157,7 +1215,7 @@ static int generate_output_filename(const char *outfile_template, char *output_f
 static int generate_gains_filename(const char *output_filename, char *gains_filename, int gains_filename_max_size) {
     const char gains_extension[] = ".gains";
     char *p = strrchr(output_filename, '.');
-    size_t sz = p == NULL ? strlen(output_filename) : (size_t)(p - output_filename);
+    size_t sz = (size_t)(p - output_filename);
     if (sz + sizeof(gains_extension) > (size_t)gains_filename_max_size)
         return -1;
     memcpy(gains_filename, output_filename, sz);
@@ -1287,9 +1345,11 @@ static void rx_callback(short *xi, short *xq, sdrplay_api_StreamCbParamsT *param
             dropped_samples = UINT_MAX - (params->firstSampleNum - rxContext->next_sample_num) + 1;
         }
         rxContext->dropped_samples += dropped_samples;
-        fprintf(stderr, "RX %c - dropped %d samples\n", rx_id, dropped_samples);
+        // fv
+        //fprintf(stderr, "RX %c - dropped %d samples\n", rx_id, dropped_samples);
     }
-    rxContext->next_sample_num = params->firstSampleNum + numSamples;
+    unsigned int nsntmp = (params->firstSampleNum + numSamples) * rxContext->internal_decimation;
+    rxContext->next_sample_num = (nsntmp + (nsntmp % 4 < 2)) / rxContext->internal_decimation;
 
     rxContext->num_samples_min = rxContext->num_samples_min < numSamples ? rxContext->num_samples_min : numSamples;
     rxContext->num_samples_max = rxContext->num_samples_max > numSamples ? rxContext->num_samples_max : numSamples;
