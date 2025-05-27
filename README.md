@@ -76,6 +76,15 @@ make (or ninja)
 ```
 
 
+## Notes for Windows users
+
+- the utility can be built with MinGW/MSYS2 (https://www.msys2.org/); MinGW can also be used to cross compile it on Linux to create a Windows executable
+- the commands to build it are the same commands in the section 'Build instructions' above (in a msys2 terminal)
+- alternatively you can download the precompiled binary for Windows in the 'Releases' page (https://github.com/fventuri/dual-tuner-recorder/releases)
+- in this case you'll probably need to 'unblock' it before you run it for the first time
+- you will also need to have the SDRplay API DLL (`sdrplay_api.dll`) in a location where `dual_tuner_recorder.exe` can find it, either by copying it to the same folder where you run `dual_tuner_recorder.exe`, or by adding to the `PATH` environment variable the path of the folder where `sdrplay_api.dll` is located
+
+
 ## Usage
 
 These are the command line options for `dual_tuner_recorder`:

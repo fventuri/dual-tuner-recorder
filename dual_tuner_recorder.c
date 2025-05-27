@@ -22,8 +22,19 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/time.h>
+#ifdef WIN32
+// timer queue
+#include <windows.h>
+#endif /* WIN32 */
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #include <sdrplay_api.h>
+#pragma GCC diagnostic pop
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 
 static char default_output_filename_raw[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQKHZ}.iq";
 static char default_output_filename_linrad[] = "RSPduo_dual_tuner_{TIMESTAMP}_{FREQKHZ}.raw";
@@ -143,6 +154,16 @@ static void signal_handler(int signum) {
         streaming_status = STREAMING_STATUS_TERMINATE;
     }
 }
+#ifdef WIN32
+static VOID CALLBACK windows_timer_handler(PVOID lpParam, BOOLEAN TimerOrWaitFired)
+{
+    UNUSED(lpParam);
+    UNUSED(TimerOrWaitFired);
+    if (streaming_status == STREAMING_STATUS_RUNNING) {
+        streaming_status = STREAMING_STATUS_TERMINATE;
+    }
+}
+#endif /* WIN32 */
 
 int main(int argc, char *argv[])
 {
@@ -169,7 +190,7 @@ int main(int argc, char *argv[])
     int marker_interval = 0;  /* store a marker tick every N seconds */
     char *outfile_template = NULL;
     unsigned int zero_sample_gaps_max_size = 100000;
-    unsigned int blocks_buffer_capacity = 1000;
+    unsigned int blocks_buffer_capacity = 2000;
     unsigned int samples_buffer_capacity = 1048576;
     int gain_changes_buffer_capacity = 100;
     OutputType output_type = OUTPUT_TYPE_RAW;
@@ -718,7 +739,7 @@ int main(int argc, char *argv[])
         }
         outfd = fileno(stdout);
     } else {
-        outfd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        outfd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
     }
     if (outfd == -1) {
         fprintf(stderr, "open(%s) for writing failed: %s\n", output_filename, strerror(errno));
@@ -767,7 +788,7 @@ int main(int argc, char *argv[])
             sdrplay_api_Close();
             exit(1);
         }
-        gainsfd = open(gains_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        gainsfd = open(gains_filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
         if (gainsfd == -1) {
             fprintf(stderr, "open(%s) for writing failed: %s\n", gains_filename, strerror(errno));
             close(outfd);
@@ -779,9 +800,27 @@ int main(int argc, char *argv[])
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+#ifndef WIN32
     signal(SIGALRM, signal_handler);
-
     alarm(streaming_time);
+#else
+    HANDLE timerQueue = CreateTimerQueue();
+    if (timerQueue == NULL) {
+        fprintf(stderr, "CreateTimerQueue failed - error=0x%lx\n", GetLastError());
+        close(outfd);
+        sdrplay_api_ReleaseDevice(&device);
+        sdrplay_api_Close();
+        exit(1);
+    } 
+    HANDLE timer = NULL;
+    if (!CreateTimerQueueTimer(&timer, timerQueue, (WAITORTIMERCALLBACK)windows_timer_handler, NULL, streaming_time * 1000, 0, 0)) {
+        fprintf(stderr, "CreateTimerQueueTimer failed - error=0x%lx\n", GetLastError());   
+        close(outfd);
+        sdrplay_api_ReleaseDevice(&device);
+        sdrplay_api_Close();
+        exit(1);
+    }
+#endif /* WIN32 */
 
     if (verbose) {
         fprintf(stderr, "streaming for %d seconds\n", streaming_time);
@@ -1939,7 +1978,7 @@ static int finalize_rf64_file(int fd, unsigned long long data_size, unsigned lon
             struct tm *tm = gmtime(&marker->ts.tv_sec);
             char buffer[20];
             /* build ISO8601/RFC3339 timestamp */
-            strftime(buffer, sizeof(buffer), "%FT%T", tm);
+            strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H%M:%S", tm);
             snprintf(marker_entry.labelText, 256, "%s.%09luZ", buffer, marker->ts.tv_nsec);
             if (write(fd, &marker_entry, sizeof(marker_entry)) == -1) {
                 return -1;
