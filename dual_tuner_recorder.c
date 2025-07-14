@@ -190,8 +190,14 @@ int main(int argc, char *argv[])
     int marker_interval = 0;  /* store a marker tick every N seconds */
     char *outfile_template = NULL;
     unsigned int zero_sample_gaps_max_size = 100000;
+#ifndef WIN32
     unsigned int blocks_buffer_capacity = 2000;
     unsigned int samples_buffer_capacity = 1048576;
+#else
+    /* Windows requires larger buffers */
+    unsigned int blocks_buffer_capacity = 16000;
+    unsigned int samples_buffer_capacity = 8388608;
+#endif
     int gain_changes_buffer_capacity = 100;
     OutputType output_type = OUTPUT_TYPE_RAW;
     int gains_file_enable = 0;
