@@ -835,6 +835,14 @@ int main(int argc, char *argv[])
     unsigned long long data_size = 0;
     unsigned long long output_samples = 0;
     streaming_status = STREAMING_STATUS_RUNNING;
+    struct timespec before_write_ts;
+    struct timespec after_write_ts;
+    unsigned long long total_writes = 0;
+    unsigned long long total_write_elapsed = 0;
+    unsigned long long max_write_elapsed = 0;
+    unsigned long long full_writes = 0;
+    unsigned long long partial_writes = 0;
+    unsigned long long zero_writes = 0;
 
     unsigned int next_sample_num = 0xffffffff;
     while (streaming_status == STREAMING_STATUS_RUNNING || streaming_status == STREAMING_STATUS_TERMINATE) {
@@ -892,11 +900,26 @@ int main(int argc, char *argv[])
                     size_t bytes_left = dropped_samples * 4 * sizeof(short);
                     memset(outdata, 0, bytes_left);
                     while (bytes_left > 0) {
+                        clock_gettime(CLOCK_REALTIME, &before_write_ts);
                         ssize_t nwritten = write(outfd, outdata, bytes_left);
+                        clock_gettime(CLOCK_REALTIME, &after_write_ts);
+                        total_writes++;
+                        unsigned long long write_elapsed = (after_write_ts.tv_sec - before_write_ts.tv_sec) * 1000000000ULL + after_write_ts.tv_nsec - before_write_ts.tv_nsec;
+                        total_write_elapsed += write_elapsed;
+                        if (write_elapsed > max_write_elapsed) {
+                            max_write_elapsed = write_elapsed;
+                        }
                         if (nwritten == -1) {
                             fprintf(stderr, "write samples failed: %s\n", strerror(errno));
                             streaming_status = STREAMING_STATUS_FAILED;
                             goto free_sample_resources;
+                        }
+                        if (nwritten == (ssize_t)bytes_left) {
+                            full_writes++;
+                        } else if (nwritten == 0) {
+                            zero_writes++;
+                        } else if (nwritten < (ssize_t)bytes_left) {
+                            partial_writes++;
                         }
                         outdata += nwritten;
                         bytes_left -= nwritten;
@@ -937,11 +960,26 @@ int main(int argc, char *argv[])
             uint8_t *outdata = (uint8_t *)outsamples;
             size_t bytes_left = num_samples * 4 * sizeof(short);
             while (bytes_left > 0) {
+                clock_gettime(CLOCK_REALTIME, &before_write_ts);
                 ssize_t nwritten = write(outfd, outdata, bytes_left);
+                clock_gettime(CLOCK_REALTIME, &after_write_ts);
+                total_writes++;
+                unsigned long long write_elapsed = (after_write_ts.tv_sec - before_write_ts.tv_sec) * 1000000000ULL + after_write_ts.tv_nsec - before_write_ts.tv_nsec;
+                total_write_elapsed += write_elapsed;
+                if (write_elapsed > max_write_elapsed) {
+                    max_write_elapsed = write_elapsed;
+                }
                 if (nwritten == -1) {
                     fprintf(stderr, "write samples failed: %s\n", strerror(errno));
                     streaming_status = STREAMING_STATUS_FAILED;
                     goto free_sample_resources;
+                }
+                if (nwritten == (ssize_t)bytes_left) {
+                    full_writes++;
+                } else if (nwritten == 0) {
+                    zero_writes++;
+                } else if (nwritten < (ssize_t)bytes_left) {
+                    partial_writes++;
                 }
                 outdata += nwritten;
                 bytes_left -= nwritten;
@@ -1064,6 +1102,13 @@ free_gain_changes_resources:
     fprintf(stderr, "blocks buffer usage = %u/%u\n", blocks_resource.nused_max, blocks_resource.size);
     fprintf(stderr, "samples buffer usage = %u/%u\n", samples_resource.nused_max, samples_resource.size);
     fprintf(stderr, "gain changes = %llu / %llu\n", num_gain_changes[0], num_gain_changes[1]);
+    unsigned long long average_write_elapsed = total_write_elapsed / total_writes;
+    fprintf(stderr, "average write elapsed = %llu.%09llu\n", average_write_elapsed / 1000000000ULL, average_write_elapsed % 1000000000ULL);
+    fprintf(stderr, "max write elapsed = %llu.%09llu\n", max_write_elapsed / 1000000000ULL, max_write_elapsed % 1000000000ULL);
+    fprintf(stderr, "total writes = %llu\n", total_writes);
+    fprintf(stderr, "full writes = %llu\n", full_writes);
+    fprintf(stderr, "partial writes = %llu\n", partial_writes);
+    fprintf(stderr, "zero writes = %llu\n", zero_writes);
 
     err = sdrplay_api_ReleaseDevice(&device);
     if (err != sdrplay_api_Success) {
