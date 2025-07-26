@@ -89,6 +89,7 @@ make (or ninja)
 
 These are the command line options for `dual_tuner_recorder`:
 
+    -c <configuration file>
     -s <RSPduo serial number>
     -r <RSPduo sample rate>
     -d <decimation>
@@ -112,6 +113,64 @@ These are the command line options for `dual_tuner_recorder`:
     -G write gains file (default: disabled)
     -X enable SDRplay API debug log level (default: disabled)
     -v enable verbose mode (default: disabled)
+
+
+## Configuration file(s)
+
+All the settings for dual tuner recorder can be read from a configuration file in the format shown below.
+
+Multiple configuration files can be specified by the using the `-c` argument multiple times in the commannd line. 
+
+Arguments from the command line can also be used to add or change settings read from the configuration file; for instance most of the settings of the recording (like frequency, gains, sample rate, etc) could be loaded from the configuration file, but the actual recording duration could be specified on the command line via the `-x` argument.
+
+### Configuration file format
+
+Lines in the configuration file are just `setting_name = setting_value`, for instance `frequency = 100e6`. Lines that begin with `#` are comments and are ignored. Empty lines are ignored too.
+
+An example of a simple configuration file is shown below.
+
+These are the names for the settings:
+  - `serial number`
+  - `rspduo sample rate`
+  - `decimation`
+  - `IF frequency`
+  - `IF bandwidth`
+  - `gRdB` (or `IFGR`)
+  - `LNA state` (or `RFGR`)
+  - `DC offset correction` (or `DC corr`)
+  - `IQ imbalance correction` (or `IQ corr`)
+  - `DC offset dcCal` (or `dcCal`)
+  - `DC offset speedUp` (or `speedUp`)
+  - `DC offset trackTime` (or `trackTime`)
+  - `DC offset refreshRateTime` (or `refreshRateTime`)
+  - `frequency`
+  - `streaming time`
+  - `marker interval`
+  - `output file`
+  - `output type`
+  - `gain file`
+  - `zero sample gaps max size`
+  - `blocks bffer capacity`
+  - `samples bffer capacity`
+  - `gain changes bffer capacity`
+  - `verbose`
+
+### Configuration file example
+
+Simple configuration file for MW recording
+```
+# configuration file for MW recording
+# Franco Venturi - Fri Jul 25 08:32:09 AM EDT 2025
+
+RSPduo sample rate = 6000000
+IF frequency = 1620
+IF bandwidth = 1536
+gRdB = AGC
+LNA state = 0
+frequency = 800000
+output file = mw/RSPduo_dual_tuner_{TIMESTAMP}_{FREQHZ}.raw
+output type = Linrad
+```
 
 
 ## Examples
@@ -141,6 +200,11 @@ dual_tuner_recorder -r 6000000 -i 1620 -b 1536 -l 3 -f 162550000 -x 3600 -W -m 3
  - same as the the example above, but with AGC enabled and storing the gain values in a `.gains` file:
 ```
 dual_tuner_recorder -r 6000000 -i 1620 -b 1536 -g AGC -l 3 -f 162550000 -x 3600 -W -m 300 -G
+```
+
+ - MW recording using the configuration file above (`mw.conf`) for 10 minutes:
+```
+dual_tuner_recorder -c mw.conf -x 600
 ```
 
 
