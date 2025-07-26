@@ -529,7 +529,7 @@ int main(int argc, char *argv[])
     pthread_mutex_t blocks_lock;
     errcode = pthread_mutex_init(&blocks_lock, NULL);
     if (errcode != 0) {
-        fprintf(stderr, "pthread_mutex_init(blocks_lock) failed - errcode=%d\n" - errcode);
+        fprintf(stderr, "pthread_mutex_init(blocks_lock) failed - errcode=%d\n", errcode);
         sdrplay_api_ReleaseDevice(&device);
         sdrplay_api_Close();
         exit(1);
@@ -537,7 +537,7 @@ int main(int argc, char *argv[])
     pthread_cond_t is_ready;
     errcode = pthread_cond_init(&is_ready, NULL);
     if (errcode != 0) {
-        fprintf(stderr, "pthread_cond_init(is_ready) failed - errcode=%d\n" - errcode);
+        fprintf(stderr, "pthread_cond_init(is_ready) failed - errcode=%d\n", errcode);
         sdrplay_api_ReleaseDevice(&device);
         sdrplay_api_Close();
         exit(1);
@@ -557,7 +557,7 @@ int main(int argc, char *argv[])
     pthread_mutex_t samples_lock;
     errcode = pthread_mutex_init(&samples_lock, NULL);
     if (errcode != 0) {
-        fprintf(stderr, "pthread_mutex_init(bsamples_lock) failed - errcode=%d\n" - errcode);
+        fprintf(stderr, "pthread_mutex_init(bsamples_lock) failed - errcode=%d\n", errcode);
         sdrplay_api_ReleaseDevice(&device);
         sdrplay_api_Close();
         exit(1);
@@ -602,7 +602,7 @@ int main(int argc, char *argv[])
     if (gains_file_enable) {
         errcode = pthread_mutex_init(&gain_changes_lock, NULL);
         if (errcode != 0) {
-            fprintf(stderr, "pthread_mutex_init(gain_changes_lock) failed - errcode=%d\n" - errcode);
+            fprintf(stderr, "pthread_mutex_init(gain_changes_lock) failed - errcode=%d\n", errcode);
             sdrplay_api_ReleaseDevice(&device);
             sdrplay_api_Close();
             exit(1);
