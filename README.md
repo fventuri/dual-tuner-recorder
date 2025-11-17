@@ -150,9 +150,9 @@ These are the names for the settings:
   - `output type`
   - `gain file`
   - `zero sample gaps max size`
-  - `blocks bffer capacity`
-  - `samples bffer capacity`
-  - `gain changes bffer capacity`
+  - `blocks buffer capacity`
+  - `samples buffer capacity`
+  - `gain changes buffer capacity`
   - `verbose`
 
 ### Configuration file example
